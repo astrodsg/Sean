@@ -1,98 +1,97 @@
 import json
 import string
 import random
-import warnings
+import inspect
 
-from faker import Faker
-
-
-def seanify(sean_formatted_json):
-    factorized_json = {}
-
-    sean_json = json.loads(sean_formatted_json)
-    for key, value in sean_json.items():
-        try:
-            factorized_json[key] = factorize(value)
-        except ValueError as e:
-            raise e
-    return factorized_json
+from faker import Faker 
+fake = Faker()
 
 
-def factorize(value):
-    if type(value) == list:
-        return _factorize_values(_val=value)
-    elif type(value) == dict:
-        return _factorize_values(**value)
-    
-
-def factorize_string(length, frmt):
-    if not length:
-        raise ValueError("Invalid length for type string")
-    value = _gen_string(length)
-    if frmt:
-        value = frmt.format(value)
-    return value
-
-
-def factorize_int(length, frmt):
-    if not length:
-        raise ValueError("Invalid length for type int")
-    value = _gen_int(length)
-    if frmt:
-        value = frmt.format(value)
-    return value
-
-
-def factorize_dict(sean_val):
-    factor_dict = {}
-    for key, value in sean_val.items():
-        val = factorize(value)
-        factor_dict[key] = val
-    return factor_dict
-
-
-def factorize_list(sean_val, length=0):
-    factor_list = []
-    for i in range(1, length+1):
-        val = factorize(sean_val)
-        factor_list.append(val)
-    return factor_list
-
-
-def _factorize_values(_type=None, _len=0, _format=None, _val=None):
-    fake = Faker()
-
-    if not _type:
-        return random.choice(_val)
-    elif _type == 'string':
-        return factorize_string(_len, _format)
-    elif _type == 'int':
-        return factorize_int(_len, _format)
-    elif _type == 'dict':
-        return factorize_dict(_val)
-    elif _type == 'list':
-        return factorize_list(_val, _len)
-    elif _type == 'bool':
-        return fake.boolean()
-    elif _type == 'text':
-        return fake.text()
-    elif _type == 'sentence':
-        return fake.sentence()
-    elif _type == 'name':
-        return fake.name()
-    elif _type == 'email':
-        return fake.email()
-    elif _type == 'timestamp':
-        return int(fake.date_time_this_month().strftime("%s"))
-    else:
-        warnings.warn("Keyword not implemented - '{}'".format(_type),
-            SyntaxWarning)
-
-
-def _gen_string(size):
+def gen_string(_len):
     ascii_chars = string.ascii_letters + "0123456789"
-    return ''.join(random.choice(ascii_chars) for i in range(size))
+    return ''.join(random.choice(ascii_chars) for _ in range(_len))
 
 
-def _gen_int(size):
-    return random.randint(10**(size-1), (10**size)-1)
+def gen_int(_min=0, _max=1, _len=None):
+    if _len is not None:
+        return random.randint(10**(_len-1), (10**_len)-1)        
+    else:
+        return random.randint(_min, _max)
+
+
+def gen_timestamp():
+    return int(fake.date_time_this_month().strftime("%s"))
+
+
+DEFAULT_GENERATORS = {
+    'string': gen_string,
+    'int': gen_int,
+    'bool': fake.boolean,
+    'text': fake.text,
+    'name': fake.name,
+    'email': fake.email,
+    'timestamp': fake.email, #gen_timestamp,
+    'datetime': fake.email, #gen_timestamp,
+}
+
+
+def _seanify_recursive(sean_json, generators, path=None):    
+    if path is None:
+        path = []
+
+    if isinstance(sean_json, list):
+        return random.choice(sean_json)
+
+    if not isinstance(sean_json, dict):
+        raise TypeError('obj not a dict, {}, path={}'.format(sean_json, path))
+
+    stype = sean_json.get('_type', None)
+    svalue = sean_json.get('_val', None)
+    sformat = sean_json.get('_format', None)
+
+    if stype is None:
+        return {
+            k: _seanify_recursive(v, generators, path=path + [k])
+            for k, v in sean_json.items()
+        }    
+
+    elif stype == 'dict':     
+        return {
+            k: _seanify_recursive(v, generators, path=path+[k])
+            for k, v in svalue.items()
+        }
+
+    elif stype == 'list':
+        length = sean_json['_len']
+        if svalue is None:
+            raise KeyError('need key _val at path {}'.format(path))
+        return [
+            _seanify_recursive(svalue, generators, path=path) 
+            for _ in range(length)
+        ]
+
+    else:
+        if stype not in generators:
+            raise KeyError(
+                'no generator for type {} at path={}'.format(stype, path)
+            )
+        gen = generators[stype]
+        kws = {
+            k: sean_json[k] 
+            for k in inspect.getargspec(gen).args
+            if k in sean_json
+        }
+        value = gen(**kws)
+        if sformat:
+            return sformat.format(value)
+        else:
+            return value
+
+
+def seanify(sean_formatted_json, generator_overrides=None):
+    generators = DEFAULT_GENERATORS.copy()
+    generators.update(generator_overrides or {})
+
+    return _seanify_recursive(sean_formatted_json, generators)
+
+
